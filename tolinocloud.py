@@ -108,6 +108,7 @@ class TolinoCloud:
         20 : 'derclub.de',
         21 : 'otto-media.de',
         22 : 'donauland.at',
+        23 : 'osiander',
         30 : 'bücher.de',
         40 : 'Bild.de', # defunct?
         60 : 'StandaardBoekhandel.be',
@@ -196,6 +197,38 @@ class TolinoCloud:
             'delete_url'       : 'https://bosh.pageplace.de/bosh/rest/deletecontent',
             'inventory_url'    : 'https://bosh.pageplace.de/bosh/rest/inventory/delta',
             'downloadinfo_url' : 'https://bosh.pageplace.de/bosh/rest//cloud/downloadinfo/{}/{}/type/external-download'
+        },
+        23: {
+            # osiander.de
+            'client_id'        : '3',
+            'scope'            : 'epublishing',
+            'token_url'        : 'https://auth.osiander.de/token',
+            'revoke_url'       : 'https://auth.osiander.de/token/revoke',
+            # 'auth_url'         : 'https://auth.osiander.de/authenticate',
+            'login_url'        : 'https://auth.osiander.de/authenticate',
+            'login_form'       : {
+                'username' : 'username',
+                'password' : 'password',
+                'extra': {
+                    'client_id'    : '3',
+                    'scope'        : 'epublishing',
+                    'grant_type'   : 'password',
+                    'response_type': 'code',
+                    # some valid fqqn is required. Auto redirect is disabled
+                    # therefor no code leak
+                    'redirect_uri' : 'bluec0re.eu'
+                }
+            },
+             # some valid fqqn is required. Auto redirect is disabled
+             # therefor no code leak
+            'reader_url'       : 'bluec0re.eu',
+            'register_url'     : 'https://bosh.pageplace.de/bosh/rest/registerhw',
+            'devices_url'      : 'https://bosh.pageplace.de/bosh/rest/handshake/devices/list',
+            'unregister_url'   : 'https://bosh.pageplace.de/bosh/rest/handshake/devices/delete',
+            'upload_url'       : 'https://bosh.pageplace.de/bosh/rest/upload',
+            'delete_url'       : 'https://bosh.pageplace.de/bosh/rest/deletecontent',
+            'inventory_url'    : 'https://bosh.pageplace.de/bosh/rest/inventory/delta',
+            'downloadinfo_url' : 'https://bosh.pageplace.de/bosh/rest/cloud/downloadinfo/{}/{}/type/external-download'
         }
     }
 
@@ -234,36 +267,44 @@ class TolinoCloud:
             self._debug(r)
             data[c['login_form']['jumpId']] = jumpId
             data[c['login_form']['token']] = token
-        r = s.post(c['login_url'], data, verify=False)
-        logging.debug(data)
-        logging.debug(c['login_cookie'])
+        r = s.post(c['login_url'], data, allow_redirects='login_cookie' in c)
         self._debug(r)
-        if not c['login_cookie'] in s.cookies:
-            raise TolinoException('login to {} failed.'.
-                format(self.partner_name[self.partner_id]))
+        logging.debug(data)
+        if 'login_cookie' in c:
+            logging.debug(c['login_cookie'])
+            if not c['login_cookie'] in s.cookies:
+                raise TolinoException('login to {} failed.'.
+                    format(self.partner_name[self.partner_id]))
         auth_code = ""
+        try:
+            params = parse_qs(urlparse(r.headers['Location']).query)
+            auth_code = params['code'][0]
+        except:
+            pass
+
         if 'tat_url' in c:
             try:
-                r = s.get(c['tat_url'], verify=False)
+                r = s.get(c['tat_url'])
                 self._debug(r)
                 b64 = re.search(r'\&tat=(.*?)%3D', r.text).group(1)
                 self.access_token = base64.b64decode(b64+'==').decode('utf-8')
             except:
                 raise TolinoException('oauth access token request failed.')
         else:
-            # Request OAUTH code
-            r = s.get(c['auth_url'], params = {
-                'client_id'     : c['client_id'],
-                'response_type' : 'code',
-                'scope'         : c['scope'],
-                'redirect_uri'  : c['reader_url']
-            }, verify=False, allow_redirects=False)
-            self._debug(r)
-            try:
-                params = parse_qs(urlparse(r.headers['Location']).query)
-                auth_code = params['code'][0]
-            except:
-                raise TolinoException('oauth code request failed.')
+            if not auth_code:
+                # Request OAUTH code
+                r = s.get(c['auth_url'], params = {
+                    'client_id'     : c['client_id'],
+                    'response_type' : 'code',
+                    'scope'         : c['scope'],
+                    'redirect_uri'  : c['reader_url']
+                }, allow_redirects=False)
+                self._debug(r)
+                try:
+                    params = parse_qs(urlparse(r.headers['Location']).query)
+                    auth_code = params['code'][0]
+                except:
+                    raise TolinoException('oauth code request failed.')
         
             # Fetch OAUTH access token
             r = s.post(c['token_url'], data = {
@@ -272,7 +313,7 @@ class TolinoCloud:
                 'code'         : auth_code,
                 'scope'        : c['scope'],
                 'redirect_uri' : c['reader_url']
-            }, verify=False, allow_redirects=False)
+            }, allow_redirects=False)
             self._debug(r)
             try:
                 j = r.json()
